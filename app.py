@@ -179,7 +179,7 @@ with tab1:
         st.pyplot(fig)
 
     # ===============================
-    # INPUT MANUAL (INI YANG WAJIB)
+    # INPUT MANUAL
     # ===============================
     st.subheader("Prediksi Stagnasi UMKM (Input Manual)")
 
