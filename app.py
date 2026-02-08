@@ -13,6 +13,9 @@ from sklearn.metrics import (
 
 from xgboost import XGBClassifier
 
+# ======================================================
+# PAGE CONFIG
+# ======================================================
 st.set_page_config(
     page_title="Prediksi Stagnasi UMKM",
     layout="wide"
@@ -23,12 +26,11 @@ st.set_page_config(
 # ======================================================
 @st.cache_data
 def load_kaggle_data():
-    df = pd.read_csv("Dataset/train/kaggle_umkm.csv")
-    return df
+    return pd.read_csv("Dataset/train/kaggle_umkm.csv")
 
 @st.cache_data
 def load_daerah_data():
-    files = {
+    return {
         "Jawa Barat (Jenis)": "Dataset/gov_context/jawabaratjenis_umkm.csv",
         "Jawa Barat (Kota/Kab)": "Dataset/gov_context/jawabaratkotakab_umkm.csv",
         "Aceh": "Dataset/gov_context/aceh_umkm.csv",
@@ -36,15 +38,13 @@ def load_daerah_data():
         "Cirebon": "Dataset/gov_context/cirebon_umkm.csv",
         "Tasikmalaya": "Dataset/gov_context/tasikmalaya_umkm.csv"
     }
-    return files
 
 # ======================================================
-# PREPROCESSING & LABEL
+# PREPROCESSING
 # ======================================================
 def preprocess_modeling_data(df):
     df = df.copy()
 
-    # kolom numerik
     num_cols = [
         "aset", "omset", "laba", "biaya_karyawan",
         "jumlah_pelanggan", "tenaga_kerja_perempuan",
@@ -55,7 +55,6 @@ def preprocess_modeling_data(df):
         df[col] = pd.to_numeric(df[col], errors="coerce")
         df[col] = df[col].fillna(df[col].median())
 
-    # label stagnasi
     median_omset = df["omset"].median()
     median_laba = df["laba"].median()
 
@@ -64,15 +63,10 @@ def preprocess_modeling_data(df):
         1, 0
     )
 
-    # drop kolom non-prediktor
     drop_cols = ["id_umkm", "nama_usaha", "tahun_berdiri"]
-    drop_cols = [c for c in drop_cols if c in df.columns]
-    df = df.drop(columns=drop_cols)
+    df = df.drop(columns=[c for c in drop_cols if c in df.columns])
 
-    # encoding kategorikal
     cat_cols = ["jenis_usaha", "marketplace", "status_legalitas"]
-    cat_cols = [c for c in cat_cols if c in df.columns]
-
     df = pd.get_dummies(df, columns=cat_cols, drop_first=True)
 
     X = df.drop("stagnasi", axis=1)
@@ -81,7 +75,7 @@ def preprocess_modeling_data(df):
     return X, y
 
 # ======================================================
-# MODELING
+# TRAIN MODEL
 # ======================================================
 @st.cache_resource
 def train_models(X, y):
@@ -93,12 +87,10 @@ def train_models(X, y):
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    # Logistic Regression
     lr = LogisticRegression(max_iter=1000)
     lr.fit(X_train_scaled, y_train)
     lr_pred = lr.predict(X_test_scaled)
 
-    # XGBoost
     xgb = XGBClassifier(
         eval_metric="logloss",
         random_state=42,
@@ -107,84 +99,138 @@ def train_models(X, y):
     xgb.fit(X_train, y_train)
     xgb_pred = xgb.predict(X_test)
 
-    results = {
-        "Logistic Regression": {
-            "model": lr,
-            "y_pred": lr_pred,
-            "scaled": True
-        },
-        "XGBoost": {
-            "model": xgb,
-            "y_pred": xgb_pred,
-            "scaled": False
-        }
+    return {
+        "lr": lr,
+        "xgb": xgb,
+        "scaler": scaler,
+        "X_columns": X.columns,
+        "y_test": y_test,
+        "lr_pred": lr_pred,
+        "xgb_pred": xgb_pred,
+        "train_shape": X_train.shape,
+        "test_shape": X_test.shape
     }
 
-    return results, y_test, X_train.shape, X_test.shape
+# ======================================================
+# HEADER
+# ======================================================
+st.title("Prediksi Stagnasi UMKM Berbasis Machine Learning")
+st.markdown(
+    "Aplikasi ini membandingkan **Logistic Regression** dan **XGBoost** "
+    "untuk memprediksi stagnasi UMKM menggunakan dataset Kaggle. "
+    "Dataset UMKM daerah digunakan sebagai konteks dan EDA Indonesia."
+)
+
+tab1, tab2 = st.tabs([" Modeling & Prediksi", " EDA UMKM Daerah"])
 
 # ======================================================
-# UI
-# ======================================================
-st.title("📊 Prediksi Stagnasi UMKM Berbasis Machine Learning")
-st.markdown("""
-Aplikasi ini membandingkan **Logistic Regression** dan **XGBoost**
-untuk memprediksi stagnasi UMKM menggunakan **dataset Kaggle**.
-Dataset UMKM daerah digunakan sebagai **EDA dan konteks Indonesia**.
-""")
-
-tab1, tab2 = st.tabs(["📈 Modeling", "🌍 EDA UMKM Daerah"])
-
-# ======================================================
-# TAB 1 : MODELING
+# TAB 1 : MODELING + INPUT MANUAL
 # ======================================================
 with tab1:
     df = load_kaggle_data()
     X, y = preprocess_modeling_data(df)
+    model_pack = train_models(X, y)
 
-    results, y_test, train_shape, test_shape = train_models(X, y)
-
-    st.subheader("📦 Informasi Data")
-    st.write(f"Train: {train_shape}")
-    st.write(f"Test: {test_shape}")
+    st.subheader("Informasi Data")
+    st.write(f"Train: {model_pack['train_shape']}")
+    st.write(f"Test: {model_pack['test_shape']}")
     st.write("Distribusi Label:")
     st.write(y.value_counts(normalize=True))
 
-    metrics = []
+    metrics = pd.DataFrame({
+        "Accuracy": [
+            accuracy_score(model_pack["y_test"], model_pack["lr_pred"]),
+            accuracy_score(model_pack["y_test"], model_pack["xgb_pred"])
+        ],
+        "Precision": [
+            precision_score(model_pack["y_test"], model_pack["lr_pred"]),
+            precision_score(model_pack["y_test"], model_pack["xgb_pred"])
+        ],
+        "Recall": [
+            recall_score(model_pack["y_test"], model_pack["lr_pred"]),
+            recall_score(model_pack["y_test"], model_pack["xgb_pred"])
+        ],
+        "F1-Score": [
+            f1_score(model_pack["y_test"], model_pack["lr_pred"]),
+            f1_score(model_pack["y_test"], model_pack["xgb_pred"])
+        ]
+    }, index=["Logistic Regression", "XGBoost"])
 
-    for name, res in results.items():
-        y_pred = res["y_pred"]
-        metrics.append({
-            "Model": name,
-            "Accuracy": accuracy_score(y_test, y_pred),
-            "Precision": precision_score(y_test, y_pred),
-            "Recall": recall_score(y_test, y_pred),
-            "F1-Score": f1_score(y_test, y_pred)
-        })
+    st.subheader("Evaluasi Model")
+    st.dataframe(metrics.style.format("{:.4f}"))
 
-    df_metrics = pd.DataFrame(metrics).set_index("Model")
-    st.subheader("📊 Evaluasi Model")
-    st.dataframe(df_metrics.style.format("{:.4f}"))
-
-    st.subheader("📉 Confusion Matrix")
+    st.subheader("Confusion Matrix")
     col1, col2 = st.columns(2)
 
-    for col, (name, res) in zip([col1, col2], results.items()):
-        with col:
-            cm = confusion_matrix(y_test, res["y_pred"])
-            fig, ax = plt.subplots()
-            disp = ConfusionMatrixDisplay(cm)
-            disp.plot(ax=ax)
-            ax.set_title(name)
-            st.pyplot(fig)
+    with col1:
+        fig, ax = plt.subplots()
+        ConfusionMatrixDisplay(
+            confusion_matrix(model_pack["y_test"], model_pack["lr_pred"])
+        ).plot(ax=ax)
+        ax.set_title("Logistic Regression")
+        st.pyplot(fig)
+
+    with col2:
+        fig, ax = plt.subplots()
+        ConfusionMatrixDisplay(
+            confusion_matrix(model_pack["y_test"], model_pack["xgb_pred"])
+        ).plot(ax=ax)
+        ax.set_title("XGBoost")
+        st.pyplot(fig)
+
+    # ===============================
+    # INPUT MANUAL (INI YANG WAJIB)
+    # ===============================
+    st.subheader("Prediksi Stagnasi UMKM (Input Manual)")
+
+    with st.form("form_prediksi"):
+        jenis_usaha = st.selectbox(
+            "Jenis Usaha", df["jenis_usaha"].unique()
+        )
+        marketplace = st.selectbox(
+            "Menggunakan Marketplace", ["Ya", "Tidak"]
+        )
+        status_legalitas = st.selectbox(
+            "Status Legalitas", df["status_legalitas"].unique()
+        )
+        aset = st.number_input("Aset", min_value=0.0)
+        omset = st.number_input("Omset", min_value=0.0)
+        laba = st.number_input("Laba", min_value=0.0)
+        submit = st.form_submit_button("Prediksi")
+
+    if submit:
+        input_df = pd.DataFrame([{
+            "aset": aset,
+            "omset": omset,
+            "laba": laba,
+            "marketplace": marketplace,
+            "jenis_usaha": jenis_usaha,
+            "status_legalitas": status_legalitas
+        }])
+
+        input_df = pd.get_dummies(input_df)
+        input_df = input_df.reindex(
+            columns=model_pack["X_columns"], fill_value=0
+        )
+
+        input_scaled = model_pack["scaler"].transform(input_df)
+        pred = model_pack["xgb"].predict(input_df)[0]
+
+        if pred == 1:
+            st.error("UMKM diprediksi mengalami stagnasi")
+        else:
+            st.success("UMKM diprediksi tidak mengalami stagnasi")
 
 # ======================================================
-# TAB 2 : EDA UMKM DAERAH
+# TAB 2 : EDA DAERAH
 # ======================================================
 with tab2:
-    st.subheader("📍 Eksplorasi UMKM Daerah")
+    st.subheader("Eksplorasi UMKM Daerah")
 
     daerah_files = load_daerah_data()
-    pilihan = st.selectbox("Pilih Dataset Daerah", list(daerah_files.keys()))
+    pilihan = st.selectbox(
+        "Pilih Dataset Daerah", list(daerah_files.keys())
+    )
 
     df_daerah = pd.read_csv(daerah_files[pilihan])
     st.dataframe(df_daerah.head())
